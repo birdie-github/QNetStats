@@ -1,7 +1,9 @@
 #include "textstatistics.h"
 #include "configure.h"
 
+#include <QCache>
 #include <QFontMetrics>
+#include <QIconEngine>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -120,10 +122,89 @@ QImage renderTextStatistics(const ViewOptions &options, const QString &upload,
     return image;
 }
 
+namespace {
+class TextStatisticsIconEngine final : public QIconEngine {
+public:
+    TextStatisticsIconEngine(const ViewOptions &options, const QString &upload,
+                             const QString &download)
+        : mOptions(options), mUpload(upload), mDownload(download) {}
+
+    QIconEngine *clone() const override {
+        return new TextStatisticsIconEngine(mOptions, mUpload, mDownload);
+    }
+
+    QSize actualSize(const QSize &size, QIcon::Mode, QIcon::State) override {
+        const int side = std::min(size.width(), size.height());
+        return side >= 8 ? QSize(side, side) : QSize();
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode, QIcon::State) override {
+        return renderedPixmap(std::min(size.width(), size.height()));
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode, QIcon::State) override {
+        const int side = std::min(rect.width(), rect.height());
+        const qreal ratio = painter->device()->devicePixelRatioF();
+        const QPixmap image = renderedPixmap(qRound(side * ratio));
+        const QRect target(rect.x() + (rect.width() - side) / 2,
+                           rect.y() + (rect.height() - side) / 2, side, side);
+        painter->drawPixmap(target, image);
+    }
+
+    // D-Bus tray backends export a list of bitmaps instead of asking for one
+    // size. Keep their existing choices; these do not limit pixmap requests.
+    QList<QSize> availableSizes(QIcon::Mode, QIcon::State)
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        const
+#endif
+        override {
+        return {QSize(16, 16), QSize(22, 22), QSize(32, 32),
+                QSize(44, 44), QSize(48, 48), QSize(64, 64)};
+    }
+
+    void virtual_hook(int id, void *data) override {
+        if (id == QIconEngine::IsNullHook) {
+            *static_cast<bool *>(data) = false;
+        } else if (id == QIconEngine::ScaledPixmapHook) {
+            auto *argument = static_cast<QIconEngine::ScaledPixmapArgument *>(data);
+            QSize pixels = argument->size;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+            // Qt 6.8 switched this argument from physical to logical pixels.
+            pixels *= argument->scale;
+#endif
+            argument->pixmap = renderedPixmap(std::min(pixels.width(), pixels.height()));
+            argument->pixmap.setDevicePixelRatio(argument->scale);
+        } else {
+            QIconEngine::virtual_hook(id, data);
+        }
+    }
+
+private:
+    QPixmap renderedPixmap(int side) {
+        if (side < 8)
+            return QPixmap();
+        if (const QPixmap *cached = mPixmaps.object(side))
+            return *cached;
+        const QPixmap image = QPixmap::fromImage(
+            renderTextStatistics(mOptions, mUpload, mDownload, side));
+        const qint64 pixels = qint64(side) * side;
+        if (!image.isNull() && pixels <= mPixmaps.maxCost())
+            mPixmaps.insert(side, new QPixmap(image), int(pixels));
+        return image;
+    }
+
+    // Each icon owns an immutable snapshot. New text or settings create a new
+    // engine, so cached images cannot outlive the values they depict.
+    const ViewOptions mOptions;
+    const QString mUpload;
+    const QString mDownload;
+    // Cost is in pixels: at most 256 KiB of 32-bit pixel data per engine.
+    // Cached pixels have DPR 1; the caller sets DPR on its returned copy.
+    QCache<int, QPixmap> mPixmaps{64 * 1024};
+};
+}
+
 QIcon textStatisticsIcon(const ViewOptions &options, const QString &upload,
                          const QString &download) {
-    QIcon icon;
-    for (int size : {16, 22, 32, 44, 48, 64})
-        icon.addPixmap(QPixmap::fromImage(renderTextStatistics(options, upload, download, size)));
-    return icon;
+    return QIcon(new TextStatisticsIconEngine(options, upload, download));
 }

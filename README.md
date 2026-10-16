@@ -10,6 +10,11 @@
 
 ## Text statistics tray icons
 
+Text icons render on demand at the pixel size requested by Qt, including
+fractional display scaling, with a bounded cache for repeated size requests.
+Changing the displayed rates or settings replaces the cached icon. D-Bus tray
+backends receive the existing set of bitmap sizes for the panel to choose from.
+
 Enable **Display Text Statistics** for an interface to add an icon showing upload
 above download, in bytes per second. Rates use only the counter difference from
 the previous sample divided by the actual elapsed time, without smoothing; the

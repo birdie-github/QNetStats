@@ -1,4 +1,5 @@
 Version 2.2.0 (not yet released)
+- Render tray text at the pixel size requested by Qt and cache rendered sizes for sharper display scaling.
 - Added macOS support with native 64-bit counters, menu-bar controls, and Qt6 DMG CI builds for Apple Silicon.
 
 Version 2.1.0
