@@ -53,8 +53,6 @@ public:
 	// Calculate a rate from traffic deltas and their measured durations.
 	inline double calcSpeed(const double *buffer) const;
 
-	bool interfaceIsValid() const;
-
 	inline bool trayIconVisible() { return mTrayIcon->isVisible() || mTextTrayIcon->isVisible(); }
 
 signals:
@@ -65,10 +63,12 @@ private:
 #ifdef Q_OS_LINUX
 	QString mSysDevPath;            // Path to the Linux device.
 #endif
+	bool mInterfaceExists = false;
 	bool mCarrier;                    // Interface carrier is on?
 	QSystemTrayIcon *mTrayIcon;
 	QSystemTrayIcon *mTextTrayIcon;
 	QString mLastUpload, mLastDownload;
+	QString mDisplayName;
 	bool mRatesAvailable = false;
 	QMenu *mContextMenu;
 	Statistics *mStatistics;        // Statistics window
@@ -83,11 +83,16 @@ private:
 
 	void updateTextTrayIcon(bool force = false);
 	void resetSampling();
-	bool interfaceHasCarrier() const;
-	quint64 readInterfaceIdentity() const;
-	bool readInterfaceCounters(unsigned long long &brx, unsigned long long &btx,
-							   unsigned long long &prx, unsigned long long &ptx) const;
+	struct InterfaceSample {
+		bool exists = false;
+		bool carrier = false;
+		bool countersAvailable = false;
+		quint64 identity = 0;
+		unsigned long long bytesRx = 0, bytesTx = 0, packetsRx = 0, packetsTx = 0;
+	};
+	InterfaceSample readInterfaceSample();
 #ifdef Q_OS_LINUX
+	quint64 readInterfaceIdentity() const;
 	bool readInterfaceNumValue(const char *name, unsigned long long &value) const;
 #endif
 

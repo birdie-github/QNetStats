@@ -43,6 +43,14 @@ the interface name and full rates; click either icon to toggle its statistics
 of interface icon disabled, the application's fallback tray icon provides a
 Statistics menu for monitored interfaces.
 
+## Interface updates
+
+Traffic figures update after each sample. IP addresses, netmasks, MAC addresses,
+and MTU refresh only while the Statistics window is visible, at an interval of
+`max(2 seconds, configured update interval)`. The first opening loads details
+immediately; reopening or applying options respects the time since the last
+refresh. Update intervals can be selected from 100 ms to 60 seconds.
+
 ## Smooth chart scrolling
 
 The chart scrolls continuously at approximately 30 frames per second, revealing

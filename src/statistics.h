@@ -2,10 +2,12 @@
 #define STATISTICS_H
 
 #include "ui_statisticsbase.h"
+#include <QElapsedTimer>
 #include <QByteArray>
 #include <QPoint>
 
 class QNetStatsView;
+class QTimer;
 class QShowEvent;
 class QHideEvent;
 class QKeyEvent;
@@ -17,7 +19,7 @@ class Statistics : public QDialog, public Ui::StatisticsBase {
 Q_OBJECT
 public:
 	explicit Statistics(QNetStatsView *parent);
-	void updateTimerInterval();
+	void updateDetailsInterval();
 
 protected:
 	void showEvent(QShowEvent *event) override;
@@ -26,7 +28,8 @@ protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
-	QTimer *mTimer;
+	QTimer *mDetailsTimer;
+	QElapsedTimer mDetailsClock;
 	QNetStatsView *mParent;
 	Chart *mChartWidget;
 	QWidget *mNormalContent;
@@ -56,6 +59,7 @@ public slots:
 private slots:
 
 	void updateStatistics();
+	void updateInterfaceDetails();
 
 	void updateTabSize(int tabIndex);
 };

@@ -18,7 +18,6 @@
 #include <net/if_media.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <QNetworkInterface>
 #include <cerrno>
 #include <cstring>
 #include <vector>
@@ -64,11 +63,7 @@ bool readWindowsInterface(const QString &name, MIB_IF_ROW2 &row) {
 
 #ifdef Q_OS_MACOS
 namespace {
-bool readMacInterfaceCounters(const QString &name, if_data64 &counters) {
-	const QByteArray encoded = name.toLocal8Bit();
-	const unsigned int index = if_nametoindex(encoded.constData());
-	if (index == 0)
-		return false;
+bool readMacInterface(unsigned int index, if_msghdr2 &result) {
 	int mib[] = {CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, static_cast<int>(index)};
 	// Address changes can grow the result between the size query and read.
 	for (int attempt = 0; attempt < 3; ++attempt) {
@@ -96,7 +91,7 @@ bool readMacInterfaceCounters(const QString &name, if_data64 &counters) {
 				if_msghdr2 row{};
 				std::memcpy(&row, message, sizeof(row));
 				if (row.ifm_index == index) {
-					counters = row.ifm_data;
+					result = row;
 					return true;
 				}
 			}
@@ -120,7 +115,6 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 
 	QNetStats::readInterfaceConfig(interface, &mOptions);
 	mTimer = new QTimer(this);
-	mStatistics = new Statistics(this);
 	mTrayIcon = new QSystemTrayIcon(this);
 	mTextTrayIcon = new QSystemTrayIcon(this);
 	mContextMenu = new QMenu(this);
@@ -130,8 +124,9 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 	mContextMenu->addAction("Configure Interfaces", parent, &QNetStats::showConfigure);
 	mContextMenu->addAction("Quit QNetStats", parent, []() { QApplication::quit(); });
 
-	setupTrayIcon();
 	setupView();
+	mStatistics = new Statistics(this);
+	setupTrayIcon();
 
 	mTimer->start(mOptions.mUpdateInterval);
 	connect(mTrayIcon, &QSystemTrayIcon::activated, this, &QNetStatsView::iconActivated);
@@ -139,13 +134,13 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 }
 
 void QNetStatsView::setupView() {
-	if (!interfaceIsValid()) {
+	const InterfaceSample sample = readInterfaceSample();
+	mInterfaceExists = sample.exists;
+	mCarrier = sample.carrier;
+	if (!sample.exists) {
 		connect(mTimer, &QTimer::timeout, this, &QNetStatsView::checkMissingInterface);
 		return;
 	}
-
-	mCarrier = interfaceHasCarrier();
-	mTrayIcon->setVisible(mCarrier && mOptions.mDisplayTrayIcon);
 	connect(mTimer, &QTimer::timeout, this, &QNetStatsView::updateStats);
 }
 
@@ -159,15 +154,17 @@ void QNetStatsView::setupTrayIcon() {
 	mTrayIcon->setToolTip(QString("Monitoring %1").arg(displayName()));
 	mTrayIcon->setContextMenu(mContextMenu);
 	mTrayIcon->setIcon(*mCurrentIcon);
-	mTrayIcon->setVisible(mOptions.mDisplayTrayIcon && mCarrier && interfaceIsValid());
+	mTrayIcon->setVisible(mOptions.mDisplayTrayIcon && mCarrier && mInterfaceExists);
 	mTextTrayIcon->setContextMenu(mContextMenu);
 	updateTextTrayIcon(true);
 	mTextTrayIcon->setVisible(mOptions.mDisplayTextStatistics);
 }
 
 void QNetStatsView::checkMissingInterface() {
-	if (interfaceIsValid()) {
-		mCarrier = interfaceHasCarrier();
+	const InterfaceSample sample = readInterfaceSample();
+	mInterfaceExists = sample.exists;
+	if (sample.exists) {
+		mCarrier = sample.carrier;
 		mTrayIcon->setVisible(mCarrier && mOptions.mDisplayTrayIcon);
 		if (mOptions.mNotifications)
 			mParent->showInterfaceNotification(QString("Interface %1 reappeared!").arg(displayName()),
@@ -180,6 +177,8 @@ void QNetStatsView::checkMissingInterface() {
 }
 
 void QNetStatsView::interfaceMissing() {
+	mInterfaceExists = false;
+	mCarrier = false;
 	mInterfaceIdentity = 0;
 	resetSampling();
 	if (mOptions.mNotifications)
@@ -195,17 +194,24 @@ void QNetStatsView::interfaceMissing() {
 void QNetStatsView::updateViewOptions() {
 	QNetStats::readInterfaceConfig(mInterface, &mOptions);
 	mTimer->setInterval(mOptions.mUpdateInterval);
-	mStatistics->updateTimerInterval();
+	mStatistics->updateDetailsInterval();
 	setupTrayIcon();
 }
 
 void QNetStatsView::updateStats() {
-	if (!interfaceIsValid()) {
+	const InterfaceSample sample = readInterfaceSample();
+	mInterfaceExists = sample.exists;
+	if (!sample.exists) {
 		interfaceMissing();
 		return;
 	}
 
-	if (!interfaceHasCarrier()) { // carrier down
+	if (sample.identity == 0) {
+		resetSampling();
+		return;
+	}
+
+	if (!sample.carrier) { // carrier down
 		resetSampling();
 		if (mCarrier) {
 			mCarrier = false;
@@ -231,22 +237,13 @@ void QNetStatsView::updateStats() {
 							   QSystemTrayIcon::Information,
 							   3000);
 
-	const quint64 interfaceIdentity = readInterfaceIdentity();
-	if (interfaceIdentity == 0) {
+	if (!sample.countersAvailable) {
 		resetSampling();
 		return;
 	}
-	unsigned long long brx{}, btx{}, prx{}, ptx{};
-	if (!readInterfaceCounters(brx, btx, prx, ptx)) {
-		resetSampling();
-		return;
-	}
-
-	// Do not commit a sample collected across an interface replacement.
-	if (readInterfaceIdentity() != interfaceIdentity) {
-		resetSampling();
-		return;
-	}
+	const quint64 interfaceIdentity = sample.identity;
+	const auto brx = sample.bytesRx, btx = sample.bytesTx;
+	const auto prx = sample.packetsRx, ptx = sample.packetsTx;
 	const bool newInterface = interfaceIdentity != mInterfaceIdentity;
 	const bool countersReset = brx < mBRx || btx < mBTx || prx < mPRx || ptx < mPTx;
 	if (newInterface || countersReset)
@@ -311,99 +308,93 @@ void QNetStatsView::updateStats() {
 }
 
 QString QNetStatsView::displayName() const {
-	return QNetStats::interfaceDisplayName(mInterface);
+	return mDisplayName.isEmpty() ? mInterface : mDisplayName;
 }
 
-bool QNetStatsView::interfaceIsValid() const {
+QNetStatsView::InterfaceSample QNetStatsView::readInterfaceSample() {
+	InterfaceSample sample;
 #ifdef Q_OS_WIN
 	MIB_IF_ROW2 row{};
-	return readWindowsInterface(mInterface, row);
+	if (!readWindowsInterface(mInterface, row))
+		return sample;
+	// One native row supplies existence, identity, link state and all counters.
+	sample.exists = true;
+	// Reuse the alias in this row instead of querying Qt from each tooltip
+	// update and every animated compact-chart label update.
+	mDisplayName = QString::fromWCharArray(row.Alias);
+	sample.identity = row.InterfaceLuid.Value;
+	sample.carrier = row.OperStatus == IfOperStatusUp;
+	sample.bytesRx = row.InOctets;
+	sample.bytesTx = row.OutOctets;
+	sample.packetsRx = row.InUcastPkts + row.InNUcastPkts;
+	sample.packetsTx = row.OutUcastPkts + row.OutNUcastPkts;
+	sample.countersAvailable = true;
 #elif defined(Q_OS_MACOS)
-	return readInterfaceIdentity() != 0;
-#else
-	return QFileInfo(mSysDevPath).isDir();
-#endif
-}
-
-bool QNetStatsView::interfaceHasCarrier() const {
-#ifdef Q_OS_WIN
-	MIB_IF_ROW2 row{};
-	return readWindowsInterface(mInterface, row) && row.OperStatus == IfOperStatusUp;
-#elif defined(Q_OS_MACOS)
-	const auto flags = QNetworkInterface::interfaceFromName(mInterface).flags();
-	if (!flags.testFlag(QNetworkInterface::IsUp) || !flags.testFlag(QNetworkInterface::IsRunning))
-		return false;
-	// Up/running alone can stay set when a physical link is disconnected.
-	// Virtual interfaces may not implement the media query; retain Qt's flags.
 	const QByteArray encoded = mInterface.toLocal8Bit();
-	if (encoded.isEmpty() || encoded.size() >= IFNAMSIZ)
-		return false;
-	const int fd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (fd < 0)
-		return true;
-	struct ifmediareq request{};
-	std::memcpy(request.ifm_name, encoded.constData(), encoded.size());
-	const bool hasMediaStatus = ioctl(fd, SIOCGIFMEDIA, &request) == 0 &&
-		(request.ifm_status & IFM_AVALID);
-	::close(fd);
-	return !hasMediaStatus || (request.ifm_status & IFM_ACTIVE);
+	const unsigned int index = if_nametoindex(encoded.constData());
+	sample.exists = index != 0;
+	if (!sample.exists)
+		return sample;
+	if_msghdr2 row{};
+	if (!readMacInterface(index, row))
+		return sample; // Query failure is not evidence of a down or missing link.
+	sample.carrier = (row.ifm_flags & IFF_UP) && (row.ifm_flags & IFF_RUNNING);
+	// Physical links can retain up/running flags while disconnected. Virtual
+	// interfaces without media status retain the flags from the native row.
+	if (sample.carrier && !encoded.isEmpty() && encoded.size() < IFNAMSIZ) {
+		const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+		if (fd >= 0) {
+			struct ifmediareq request{};
+			std::memcpy(request.ifm_name, encoded.constData(), encoded.size());
+			if (ioctl(fd, SIOCGIFMEDIA, &request) == 0 && (request.ifm_status & IFM_AVALID))
+				sample.carrier = request.ifm_status & IFM_ACTIVE;
+			::close(fd);
+		}
+	}
+	if (if_nametoindex(encoded.constData()) != index)
+		return sample; // Do not commit a snapshot spanning an interface replacement.
+	sample.identity = row.ifm_index;
+	sample.bytesRx = row.ifm_data.ifi_ibytes;
+	sample.bytesTx = row.ifm_data.ifi_obytes;
+	sample.packetsRx = row.ifm_data.ifi_ipackets;
+	sample.packetsTx = row.ifm_data.ifi_opackets;
+	sample.countersAvailable = true;
 #else
+	sample.exists = QFileInfo(mSysDevPath).isDir();
+	if (!sample.exists)
+		return sample;
+	const quint64 identity = readInterfaceIdentity();
+	if (identity == 0)
+		return sample;
 	FILE *file = fopen((mSysDevPath + "carrier").toLatin1(), "r");
-	if (!file)
-		return false;
-	// EOF or an unreadable carrier is treated as down.
-	const bool carrier = fgetc(file) == '1';
-	fclose(file);
-	return carrier;
+	if (file) {
+		sample.carrier = fgetc(file) == '1';
+		fclose(file);
+	}
+	if (sample.carrier) {
+		sample.countersAvailable = readInterfaceNumValue("rx_bytes", sample.bytesRx) &&
+			readInterfaceNumValue("tx_bytes", sample.bytesTx) &&
+			readInterfaceNumValue("rx_packets", sample.packetsRx) &&
+			readInterfaceNumValue("tx_packets", sample.packetsTx);
+	}
+	// sysfs counters are separate reads. Preserve the replacement guard around
+	// both link state and counters, including unsuccessful counter reads.
+	if (readInterfaceIdentity() != identity)
+		return sample;
+	sample.identity = identity;
 #endif
+	return sample;
 }
 
+#ifdef Q_OS_LINUX
 quint64 QNetStatsView::readInterfaceIdentity() const {
-#ifdef Q_OS_WIN
-	MIB_IF_ROW2 row{};
-	return readWindowsInterface(mInterface, row) ? row.InterfaceLuid.Value : 0;
-#elif defined(Q_OS_MACOS)
-	return if_nametoindex(mInterface.toLocal8Bit().constData());
-#else
 	unsigned int index{};
 	std::ifstream file((mSysDevPath + "ifindex").toLatin1());
 	if (!(file >> index))
 		return 0;
 	return index;
-#endif
 }
 
-bool QNetStatsView::readInterfaceCounters(unsigned long long &brx, unsigned long long &btx,
-										  unsigned long long &prx, unsigned long long &ptx) const {
-#ifdef Q_OS_WIN
-	MIB_IF_ROW2 row{};
-	if (!readWindowsInterface(mInterface, row))
-		return false;
-	// One snapshot, using 64-bit counters. Non-unicast includes broadcast
-	// and multicast packets, so packet totals cover all traffic.
-	brx = row.InOctets;
-	btx = row.OutOctets;
-	prx = row.InUcastPkts + row.InNUcastPkts;
-	ptx = row.OutUcastPkts + row.OutNUcastPkts;
-	return true;
-#elif defined(Q_OS_MACOS)
-	if_data64 counters{};
-	if (!readMacInterfaceCounters(mInterface, counters))
-		return false;
-	brx = counters.ifi_ibytes;
-	btx = counters.ifi_obytes;
-	prx = counters.ifi_ipackets;
-	ptx = counters.ifi_opackets;
-	return true;
-#else
-	return readInterfaceNumValue("rx_bytes", brx) &&
-		readInterfaceNumValue("tx_bytes", btx) &&
-		readInterfaceNumValue("rx_packets", prx) &&
-		readInterfaceNumValue("tx_packets", ptx);
-#endif
-}
-
-#ifdef Q_OS_LINUX
 bool QNetStatsView::readInterfaceNumValue(const char *name, unsigned long long &value) const {
 	std::ifstream file((mSysDevPath + "statistics/" + name).toLatin1());
 	return bool(file >> value);

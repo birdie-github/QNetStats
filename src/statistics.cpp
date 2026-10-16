@@ -60,11 +60,16 @@ Statistics::Statistics(QNetStatsView *parent)
 	mCompactMaxSpeedLabel->hide();
 	this->update();
 
-	mTimer = new QTimer(this);
-	updateTimerInterval();
+	mDetailsTimer = new QTimer(this);
+	mDetailsTimer->setSingleShot(true);
+	mDetailsTimer->setTimerType(Qt::PreciseTimer);
 	connect(tabWidget, &QTabWidget::currentChanged, this, &Statistics::updateTabSize);
 	updateTabSize(tabWidget->currentIndex());
-	connect(mTimer, &QTimer::timeout, this, &Statistics::updateStatistics);
+	connect(mDetailsTimer, &QTimer::timeout, this, &Statistics::updateInterfaceDetails);
+	connect(parent, &QNetStatsView::chartHistoryChanged, this, [this]() {
+		if (isVisible())
+			updateStatistics();
+	});
 	connect(parent, &QNetStatsView::chartHistoryChanged, chart, &Chart::sampleUpdated);
 	connect(chart, &Chart::maximumSpeedChanged, this, [this](double speed) {
 		mMaxSpeed->setText(locale().formattedDataSize(speed) + "/s");
@@ -86,8 +91,22 @@ void Statistics::updateStatistics() {
 	mPTx->setText(QString::number(mParent->mTotalPktTx));
 	mPktSpeedRx->setText(QString::number(mParent->calcSpeed(mParent->mDeltaBufferPRx), 'f', 1) + " pkts/s");
 	mPktSpeedTx->setText(QString::number(mParent->calcSpeed(mParent->mDeltaBufferPTx), 'f', 1) + " pkts/s");
+}
 
-	auto interface = QNetworkInterface::interfaceFromName(mParent->mInterface);
+void Statistics::updateInterfaceDetails() {
+	const int interval = qMax(2000, mParent->updateInterval());
+	if (mDetailsClock.isValid()) {
+		const qint64 remaining = interval - mDetailsClock.elapsed();
+		if (remaining > 0) {
+			mDetailsTimer->start(int(remaining));
+			return;
+		}
+	}
+	// Reopening the window or applying options also respects the last refresh.
+	const auto interface = QNetworkInterface::interfaceFromName(mParent->mInterface);
+	mDetailsClock.start();
+	mDetailsTimer->start(interval);
+	setWindowTitle(QString("Monitoring Interface %1 - QNetStats").arg(mParent->displayName()));
 	mMTU->setNum(interface.maximumTransmissionUnit());
 	mMAC->setText(interface.hardwareAddress());
 	if (interface.flags() & QNetworkInterface::IsRunning) {
@@ -102,7 +121,7 @@ void Statistics::updateStatistics() {
 	}
 	mIP->setText("Not Connected");
 	mNetmask->setText("Not Connected");
-	if (!mParent->interfaceIsValid()) {
+	if (!interface.isValid()) {
 		mMTU->setText("N/A");
 		mMAC->setText("N/A");
 	}
@@ -137,13 +156,14 @@ void Statistics::updateTabSize(int tabIndex) {
 	tabWidget->widget(tabIndex)->adjustSize();
 }
 
-void Statistics::updateTimerInterval() {
-	mTimer->setInterval(mParent->updateInterval());
+void Statistics::updateDetailsInterval() {
+	if (isVisible())
+		updateInterfaceDetails();
 }
 
 void Statistics::showEvent(QShowEvent *event) {
 	updateStatistics();
-	mTimer->start(mParent->updateInterval());
+	updateInterfaceDetails();
 	QDialog::showEvent(event);
 }
 
@@ -152,7 +172,7 @@ void Statistics::hideEvent(QHideEvent *event) {
 	// not a request to remember the intermediate layout or window state.
 	if (!event->spontaneous() && !mChangingMode)
 		mHiddenGeometry = saveGeometry();
-	mTimer->stop();
+	mDetailsTimer->stop();
 	mDragPending = false;
 	mManualDrag = false;
 	QDialog::hideEvent(event);
