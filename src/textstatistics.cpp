@@ -2,11 +2,15 @@
 #include "configure.h"
 
 #include <QCache>
+#include <QDataStream>
 #include <QFontMetrics>
+#include <QGuiApplication>
 #include <QIconEngine>
+#include <QIODevice>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QScreen>
 #include <algorithm>
 #include <cmath>
 
@@ -55,9 +59,33 @@ int maximumRateWidth(const QFontMetrics &metrics, bool useBits) {
     return width;
 }
 
-void drawRate(QPainter &painter, QRect area, QFont font, const QString &text, int shadowSize, bool useBits) {
-    if (area.isEmpty())
-        return;
+// Shared by previews and successive tray icons on the GUI thread. Readings and
+// colors do not affect fitting, so they must not invalidate these results.
+class RateFontCache final : public QObject {
+public:
+    RateFontCache() : QObject(qGuiApp) {
+        connect(qGuiApp, &QGuiApplication::fontDatabaseChanged, this, [this]() {
+            sizes.clear();
+        });
+    }
+
+    QCache<QByteArray, int> sizes{128};
+};
+
+int fittedRateFontSize(QFont font, const QSize &area, bool useBits) {
+    static auto *cache = new RateFontCache;
+    QByteArray key;
+    QDataStream stream(&key, QIODevice::WriteOnly);
+    stream << font << area << useBits;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    stream << QFontMetrics(font).fontDpi();
+#else
+    const QScreen *screen = QGuiApplication::primaryScreen();
+    stream << (screen ? screen->logicalDotsPerInchY() : qreal(96));
+#endif
+    if (const int *cached = cache->sizes.object(key))
+        return *cached;
+
     // Fit the largest size of the chosen family/style that accommodates every
     // short value. Font size stays constant when traffic changes.
     int bestSize = 1;
@@ -67,6 +95,16 @@ void drawRate(QPainter &painter, QRect area, QFont font, const QString &text, in
         if (metrics.height() <= area.height() && maximumRateWidth(metrics, useBits) <= area.width())
             bestSize = pixels;
     }
+    cache->sizes.insert(key, new int(bestSize));
+    return bestSize;
+}
+
+void drawRate(QPainter &painter, QRect area, QFont font, const QString &text, int shadowSize, bool useBits) {
+    if (area.isEmpty())
+        return;
+    // Equal-sized upload/download rows share the same cached fit. Odd icon
+    // heights retain separate fits for their differently sized rows.
+    const int bestSize = fittedRateFontSize(font, area.size(), useBits);
     font.setPixelSize(bestSize);
     painter.setFont(font);
     painter.save();

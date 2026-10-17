@@ -1,4 +1,5 @@
 Version 2.2.0 (not yet released)
+- Cache tray text font fitting across traffic updates and share fits between equal-sized rows.
 - Consolidate interface sampling and refresh interface details no faster than every two seconds, respecting slower update intervals.
 - Render tray text at the pixel size requested by Qt and cache rendered sizes for sharper display scaling.
 - Added macOS support with native 64-bit counters, menu-bar controls, and Qt6 DMG CI builds for Apple Silicon.
