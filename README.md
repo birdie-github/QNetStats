@@ -226,7 +226,7 @@ settings under `HKEY_CURRENT_USER\Software\QNetStats\QNetStats` by default.
 ## Credits:
 
  - Hugo Parente Lima for the original KNetStats project that this is based on, without it this would not exist
- - [James](https://github.com/telans) for porting the app to KDE5.
+ - [James Beddek](https://github.com/telans) for porting the app to KDE5.
  - @birdie-github for thorough testing during development, and for kindly sponsoring that work
  - All the original KNetStats contributors
  - OpenAI/ChatGPT who made this version of the application possible
