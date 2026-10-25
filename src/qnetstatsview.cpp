@@ -29,6 +29,13 @@
 #include <algorithm>
 #include <QTimer>
 #include <QMenu>
+#include <QAction>
+#include <QMessageBox>
+#include <QAbstractButton>
+#include <QPushButton>
+#include <QPainter>
+#include <QPixmap>
+#include <QPolygonF>
 #include "qnetstatsview.h"
 #include "qnetstats.h"
 #include "statistics.h"
@@ -36,6 +43,32 @@
 #include <QLocale>
 
 extern const char *programName;
+
+namespace {
+QIcon disconnectIcon(bool warning) {
+	QIcon icon;
+	for (int size : {16, 22, 32, 44, 48, 64, 96, 128}) {
+		QPixmap image(size, size);
+		image.fill(Qt::transparent);
+		if (warning) {
+			QPainter painter(&image);
+			painter.setRenderHint(QPainter::Antialiasing);
+			painter.setWindow(0, 0, 64, 64);
+			QPolygonF triangle;
+			triangle << QPointF(32, 4) << QPointF(61, 58) << QPointF(3, 58);
+			painter.setPen(QPen(Qt::black, 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+			painter.setBrush(QColor(255, 210, 0));
+			painter.drawPolygon(triangle);
+			painter.setPen(Qt::NoPen);
+			painter.setBrush(Qt::black);
+			painter.drawRoundedRect(QRectF(29, 22, 6, 20), 2, 2);
+			painter.drawEllipse(QRectF(29, 47, 6, 6));
+		}
+		icon.addPixmap(image);
+	}
+	return icon;
+}
+}
 
 #ifdef Q_OS_WIN
 namespace {
@@ -118,6 +151,18 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 	mTrayIcon = new QSystemTrayIcon(this);
 	mTextTrayIcon = new QSystemTrayIcon(this);
 	mContextMenu = new QMenu(this);
+	mWarningTimer = new QTimer(this);
+	mWarningTimer->setSingleShot(true);
+	mWarningTimer->setTimerType(Qt::PreciseTimer);
+	connect(mWarningTimer, &QTimer::timeout, this, [this]() {
+		mWarningVisible = !mWarningVisible;
+		updateWarningPresentation();
+		mWarningTimer->start(mWarningVisible ? 2000 : 1000);
+	});
+	// The menu also provides acknowledgement on macOS, where a click opens it.
+	mWarningAction = mContextMenu->addAction(tr("Review disconnect warning"),
+		this, &QNetStatsView::showDisconnectWarning);
+	mWarningAction->setVisible(false);
 #ifdef Q_OS_MACOS
 	mContextMenu->addAction(tr("Statistics"), this, &QNetStatsView::showStatistics);
 #endif
@@ -136,7 +181,7 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 void QNetStatsView::setupView() {
 	const InterfaceSample sample = readInterfaceSample();
 	mInterfaceExists = sample.exists;
-	mCarrier = sample.carrier;
+	mCarrier = sample.identity != 0 && sample.carrier;
 	if (!sample.exists) {
 		connect(mTimer, &QTimer::timeout, this, &QNetStatsView::checkMissingInterface);
 		return;
@@ -151,21 +196,113 @@ void QNetStatsView::setupTrayIcon() {
 	mIconRx = QIcon(":/img/theme" + QString::number(mOptions.mTheme) + "_rx.png");
 	mIconBoth = QIcon(":/img/theme" + QString::number(mOptions.mTheme) + "_both.png");
 	mCurrentIcon = &mIconNone;
-	mTrayIcon->setToolTip(QString("Monitoring %1").arg(displayName()));
 	mTrayIcon->setContextMenu(mContextMenu);
-	mTrayIcon->setIcon(*mCurrentIcon);
-	mTrayIcon->setVisible(mOptions.mDisplayTrayIcon && mCarrier && mInterfaceExists);
+	const bool activityWarning = !mDisconnectedAt.isNull() && !warningUsesTextIcon();
+	if (!activityWarning) {
+		mTrayIcon->setToolTip(QString("Monitoring %1").arg(displayName()));
+		mTrayIcon->setIcon(*mCurrentIcon);
+	}
+	mTrayIcon->setVisible(activityWarning || (mOptions.mDisplayTrayIcon && mCarrier && mInterfaceExists));
 	mTextTrayIcon->setContextMenu(mContextMenu);
 	updateTextTrayIcon(true);
 	mTextTrayIcon->setVisible(mOptions.mDisplayTextStatistics);
+	updateWarningPresentation();
+}
+
+bool QNetStatsView::warningUsesTextIcon() const {
+	return !mOptions.mDisplayTrayIcon && mOptions.mDisplayTextStatistics;
+}
+
+void QNetStatsView::recordDisconnect() {
+	// Only a transition from an observed connected state arms the warning.
+	// Keep the first detection time until acknowledged, even across reconnects.
+	if (!mOptions.mFlashOnDisconnect || !mCarrier || !mDisconnectedAt.isNull())
+		return;
+	if (mWarningIcon.isNull()) {
+		mWarningIcon = disconnectIcon(true);
+		mBlankIcon = disconnectIcon(false);
+	}
+	mDisconnectedAt = QDateTime::currentDateTime();
+	mWarningVisible = true;
+	mWarningAction->setVisible(true);
+	mWarningTimer->start(2000);
+	updateWarningPresentation();
+	mParent->checkTrayIconsAvailable();
+}
+
+QString QNetStatsView::disconnectDescription() const {
+	const QString status = !mInterfaceExists ? tr("Missing")
+		: mCarrier ? tr("Connected") : tr("Disconnected");
+	return tr("Interface: %1\nDetected: %2\nCurrent status: %3")
+		.arg(displayName(), QLocale().toString(mDisconnectedAt, QLocale::ShortFormat), status);
+}
+
+void QNetStatsView::updateWarningPresentation() {
+	if (mDisconnectedAt.isNull())
+		return;
+	QSystemTrayIcon *target = warningUsesTextIcon() ? mTextTrayIcon : mTrayIcon;
+	const QIcon &icon = mWarningVisible ? mWarningIcon : mBlankIcon;
+	if (target->icon().cacheKey() != icon.cacheKey())
+		target->setIcon(icon);
+	const QString description = disconnectDescription();
+	const QString tooltip = tr("Unacknowledged disconnect\n%1").arg(description);
+	if (target->toolTip() != tooltip)
+		target->setToolTip(tooltip);
+	// Leave the icon registered during the blank phase, including while down.
+	target->show();
+	if (mWarningDialog)
+		mWarningDialog->setInformativeText(description);
+}
+
+void QNetStatsView::showDisconnectWarning() {
+	if (mDisconnectedAt.isNull())
+		return;
+	if (mWarningDialog) {
+		mWarningDialog->showNormal();
+		mWarningDialog->raise();
+		mWarningDialog->activateWindow();
+		return;
+	}
+	auto *dialog = new QMessageBox(QMessageBox::Warning, tr("Interface disconnected"),
+		tr("A disconnect was detected."), QMessageBox::NoButton, this);
+	mWarningDialog = dialog;
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->setWindowModality(Qt::NonModal);
+	dialog->setTextFormat(Qt::PlainText);
+	dialog->setInformativeText(disconnectDescription());
+	auto *acknowledge = dialog->addButton(tr("Acknowledge"), QMessageBox::AcceptRole);
+	dialog->addButton(QMessageBox::Close);
+	connect(dialog, &QDialog::finished, this, [this, dialog, acknowledge](int) {
+		mWarningDialog = nullptr;
+		if (dialog->clickedButton() == acknowledge)
+			clearDisconnectWarning();
+	});
+	// No nested event loop: monitoring can be disabled and the view destroyed.
+	dialog->show();
+	dialog->raise();
+	dialog->activateWindow();
+}
+
+void QNetStatsView::clearDisconnectWarning() {
+	if (mDisconnectedAt.isNull())
+		return;
+	mDisconnectedAt = QDateTime();
+	mWarningTimer->stop();
+	mWarningAction->setVisible(false);
+	if (mWarningDialog)
+		mWarningDialog->close();
+	setupTrayIcon();
+	mParent->checkTrayIconsAvailable();
 }
 
 void QNetStatsView::checkMissingInterface() {
 	const InterfaceSample sample = readInterfaceSample();
 	mInterfaceExists = sample.exists;
 	if (sample.exists) {
-		mCarrier = sample.carrier;
-		mTrayIcon->setVisible(mCarrier && mOptions.mDisplayTrayIcon);
+		mCarrier = sample.identity != 0 && sample.carrier;
+		if (mDisconnectedAt.isNull() || warningUsesTextIcon())
+			mTrayIcon->setVisible(mCarrier && mOptions.mDisplayTrayIcon);
+		updateWarningPresentation();
 		if (mOptions.mNotifications)
 			mParent->showInterfaceNotification(QString("Interface %1 reappeared!").arg(displayName()),
 								   QSystemTrayIcon::Information,
@@ -177,6 +314,7 @@ void QNetStatsView::checkMissingInterface() {
 }
 
 void QNetStatsView::interfaceMissing() {
+	recordDisconnect();
 	mInterfaceExists = false;
 	mCarrier = false;
 	mInterfaceIdentity = 0;
@@ -185,7 +323,9 @@ void QNetStatsView::interfaceMissing() {
 		mParent->showInterfaceNotification(QString("Interface %1 disappeared!").arg(displayName()),
 							   QSystemTrayIcon::Information,
 							   3000);
-	mTrayIcon->hide();
+	if (mDisconnectedAt.isNull() || warningUsesTextIcon())
+		mTrayIcon->hide();
+	updateWarningPresentation();
 	disconnect(mTimer, &QTimer::timeout, this, &QNetStatsView::updateStats);
 	connect(mTimer, &QTimer::timeout, this, &QNetStatsView::checkMissingInterface);
 	mParent->checkTrayIconsAvailable();
@@ -195,6 +335,8 @@ void QNetStatsView::updateViewOptions() {
 	QNetStats::readInterfaceConfig(mInterface, &mOptions);
 	mTimer->setInterval(mOptions.mUpdateInterval);
 	mStatistics->updateDetailsInterval();
+	if (!mOptions.mFlashOnDisconnect)
+		clearDisconnectWarning();
 	setupTrayIcon();
 }
 
@@ -214,16 +356,18 @@ void QNetStatsView::updateStats() {
 	if (!sample.carrier) { // carrier down
 		resetSampling();
 		if (mCarrier) {
+			recordDisconnect();
 			mCarrier = false;
 			if (mOptions.mNotifications)
 				mParent->showInterfaceNotification(QString("Interface %1 is down!").arg(displayName()),
 									   QSystemTrayIcon::Information,
 									   3000);
 		}
-		if (mTrayIcon->isVisible()) {
+		if (mTrayIcon->isVisible() && (mDisconnectedAt.isNull() || warningUsesTextIcon())) {
 			mTrayIcon->hide();
 			mParent->checkTrayIconsAvailable();
 		}
+		updateWarningPresentation();
 		return;
 	}
 	const bool carrierWasDown = !mCarrier;
@@ -232,6 +376,8 @@ void QNetStatsView::updateStats() {
 		mTrayIcon->show();
 		mParent->checkTrayIconsAvailable();
 	}
+	if (carrierWasDown)
+		updateWarningPresentation();
 	if (carrierWasDown && mOptions.mNotifications)
 		mParent->showInterfaceNotification(QString("Interface %1 is up!").arg(displayName()),
 							   QSystemTrayIcon::Information,
@@ -289,7 +435,8 @@ void QNetStatsView::updateStats() {
 
 	if (newIcon != mCurrentIcon) {
 		mCurrentIcon = newIcon;
-		mTrayIcon->setIcon(*mCurrentIcon);
+		if (mDisconnectedAt.isNull() || warningUsesTextIcon())
+			mTrayIcon->setIcon(*mCurrentIcon);
 	}
 
 	// Include the first counters of each interface lifetime, then safe deltas.
@@ -429,7 +576,9 @@ void QNetStatsView::iconActivated(QSystemTrayIcon::ActivationReason reason) {
 	Q_UNUSED(reason);
 #else
 	if (reason == QSystemTrayIcon::ActivationReason::Trigger) {
-		if (mStatistics->isVisible())
+		if (!mDisconnectedAt.isNull())
+			showDisconnectWarning();
+		else if (mStatistics->isVisible())
 			mStatistics->hideWindow();
 		else
 			showStatistics();
@@ -438,7 +587,7 @@ void QNetStatsView::iconActivated(QSystemTrayIcon::ActivationReason reason) {
 }
 
 void QNetStatsView::updateTextTrayIcon(bool force) {
-	if (!mOptions.mDisplayTextStatistics)
+	if (!mOptions.mDisplayTextStatistics || (!mDisconnectedAt.isNull() && warningUsesTextIcon()))
 		return;
 	// Text statistics use only the latest counter interval, without smoothing.
 	const double seconds = mSampleSeconds[mDeltaBufferPtr];

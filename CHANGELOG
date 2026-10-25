@@ -1,4 +1,5 @@
 Version 2.3.0
+- Added optional flashing disconnect warnings that remain until acknowledged, including after reconnection.
 - Improved performance.
 
 Version 2.2.0

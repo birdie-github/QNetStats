@@ -104,6 +104,7 @@ void Configure::storeCurrentOptions() {
 	ViewOptions &view = mConfig[mCurrentItem];
 	view.mMonitoring = mMonitoringInterface->isChecked();
 	view.mNotifications = mDisplayNotifications->isChecked();
+	view.mFlashOnDisconnect = mFlashOnDisconnect->isChecked();
 	view.mDisplayTrayIcon = mDisplayTrayIcon->isChecked();
 	view.mDisplayTextStatistics = mTextStatisticsGroup->isChecked();
 	view.mTextDigit = mTextDigit->currentIndex();
@@ -143,6 +144,7 @@ void Configure::changeInterface(QListWidgetItem *item) {
 	// General options
 	mMonitoringInterface->setChecked(view.mMonitoring);
 	mDisplayNotifications->setChecked(view.mNotifications);
+	mFlashOnDisconnect->setChecked(view.mFlashOnDisconnect);
 	mDisplayTrayIcon->setChecked(view.mDisplayTrayIcon);
 	mTextStatisticsGroup->setChecked(view.mDisplayTextStatistics);
 	mTextDigit->setCurrentIndex(view.mTextDigit);

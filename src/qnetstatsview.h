@@ -5,12 +5,16 @@
 #include <QWidget>
 #include <QIcon>
 #include <QElapsedTimer>
+#include <QDateTime>
+#include <QPointer>
 #include "configure.h"
 
 class QNetStats;
 class Statistics;
 class QMenu;
 class QTimer;
+class QAction;
+class QMessageBox;
 
 class QNetStatsView : public QWidget {
 Q_OBJECT
@@ -76,6 +80,18 @@ private:
 	// Icons
 	QIcon mIconNone, mIconTx, mIconRx, mIconBoth;
 	QIcon *mCurrentIcon{};            // Current state
+	QTimer *mWarningTimer;
+	QAction *mWarningAction;
+	QPointer<QMessageBox> mWarningDialog;
+	QDateTime mDisconnectedAt;
+	bool mWarningVisible = false;
+	QIcon mWarningIcon, mBlankIcon;
+	bool warningUsesTextIcon() const;
+	void recordDisconnect();
+	void updateWarningPresentation();
+	QString disconnectDescription() const;
+	void showDisconnectWarning();
+	void clearDisconnectWarning();
 	QTimer *mTimer;                    // Timer
 	quint64 mInterfaceIdentity{};
 	QElapsedTimer mSampleClock;

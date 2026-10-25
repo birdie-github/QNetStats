@@ -13,6 +13,7 @@ struct ViewOptions {
 	int mUpdateInterval;
 	bool mMonitoring;
 	bool mNotifications;
+	bool mFlashOnDisconnect;
 	bool mDisplayTrayIcon;
 	bool mDisplayTextStatistics;
 	int mTextDigit;

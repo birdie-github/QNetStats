@@ -45,6 +45,7 @@ ViewOptions defaultInterfaceOptions(const QString &name) {
 	defaults.mUpdateInterval = 500;
 	defaults.mMonitoring = true;
 	defaults.mNotifications = true;
+	defaults.mFlashOnDisconnect = false;
 	defaults.mDisplayTrayIcon = true;
 	defaults.mDisplayTextStatistics = false;
 	defaults.mTextDigit = 0;
@@ -330,6 +331,7 @@ void QNetStats::readInterfaceConfig(const QString &ifName, ViewOptions *opts) {
 		opts->mUpdateInterval = defaults.mUpdateInterval;
 	opts->mMonitoring = settings.value("Monitoring", defaults.mMonitoring).toBool();
 	opts->mNotifications = settings.value("DisplayNotifications", defaults.mNotifications).toBool();
+	opts->mFlashOnDisconnect = settings.value("FlashOnDisconnect", defaults.mFlashOnDisconnect).toBool();
 	opts->mDisplayTrayIcon = settings.value("DisplayTrayIcon", defaults.mDisplayTrayIcon).toBool();
 	opts->mDisplayTextStatistics = settings.value("DisplayTextStatistics", defaults.mDisplayTextStatistics).toBool();
 	opts->mTextDigit = std::clamp(settings.value("TextStatisticsDigit", defaults.mTextDigit).toInt(), 0, 9);
@@ -372,6 +374,7 @@ void QNetStats::saveConfig(const OptionsMap &options) {
 		saveOverride(settings, "UpdateInterval", opt.mUpdateInterval, defaults.mUpdateInterval);
 		saveOverride(settings, "Monitoring", opt.mMonitoring, defaults.mMonitoring);
 		saveOverride(settings, "DisplayNotifications", opt.mNotifications, defaults.mNotifications);
+		saveOverride(settings, "FlashOnDisconnect", opt.mFlashOnDisconnect, defaults.mFlashOnDisconnect);
 		saveOverride(settings, "DisplayTrayIcon", opt.mDisplayTrayIcon, defaults.mDisplayTrayIcon);
 		saveOverride(settings, "DisplayTextStatistics", opt.mDisplayTextStatistics, defaults.mDisplayTextStatistics);
 		saveOverride(settings, "TextStatisticsDigit", opt.mTextDigit, defaults.mTextDigit);

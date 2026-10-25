@@ -43,6 +43,28 @@ the interface name and full rates; click either icon to toggle its statistics
 of interface icon disabled, the application's fallback tray icon provides a
 Statistics menu for monitored interfaces.
 
+## Disconnect warnings
+
+Enable **Flash icon on disconnect** for an interface to keep a warning visible
+until acknowledged. It is off by default and independent of connection
+notifications. After an observed connected interface goes down or disappears,
+a warning triangle flashes for two seconds followed by one second blank. Its
+tray slot stays occupied. The warning replaces the activity icon, or the text
+icon if only text is enabled; with both disabled, a temporary warning icon appears.
+
+Click the icon (or choose **Review disconnect warning** from its menu, including
+on macOS) to see the detection time and current interface status. Choose
+**Acknowledge** to clear it; closing the dialog keeps it pending. Reconnecting
+does not clear an unacknowledged warning. Once acknowledged, an interface that
+remains down will not alarm again until it reconnects and disconnects again.
+Disabling the option or monitoring clears the warning; warnings are not saved
+across application restarts. Starting with an interface already down does not
+trigger one.
+
+Detection follows the configured sampling interval and interface state. It
+cannot detect a VPN that stops passing traffic while its interface stays up,
+or an interruption entirely between samples.
+
 ## Interface updates
 
 Traffic figures update after each sample. IP addresses, netmasks, MAC addresses,
