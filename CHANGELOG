@@ -1,5 +1,6 @@
 Version 2.3.0
-- Added optional flashing disconnect warnings that remain until acknowledged, including after reconnection.
+- Added runtime interface history with up to 65,535 events per interface; disconnect warnings now clear on reconnection.
+- Added optional flashing disconnect warnings that remain until acknowledged or reconnected.
 - Improved performance.
 
 Version 2.2.0

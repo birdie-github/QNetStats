@@ -128,6 +128,21 @@ QNetStats::QNetStats() : QDialog(nullptr, Qt::Window), mConfigure(nullptr) {
 	checkTrayIconsAvailable();
 }
 
+void QNetStats::addInterfaceHistoryMenu(QMenu *menu) {
+	auto *history = menu->addMenu(tr("Interface History"));
+	connect(history, &QMenu::aboutToShow, this, [this, history]() {
+		history->clear();
+		QStringList names = mViews.keys();
+		names.sort();
+		for (const QString &name : names) {
+			auto *view = mViews.value(name);
+			QString label = view->displayName();
+			label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+			history->addAction(label, view, &QNetStatsView::showInterfaceHistory);
+		}
+	});
+}
+
 void QNetStats::checkTrayIconsAvailable() {
 	updateFallbackWindow();
 	mBackupStatisticsMenu->clear();
@@ -176,6 +191,7 @@ void QNetStats::setupBackupTrayIcon() {
 	mBackupTrayIcon->setToolTip("QNetStats — Configure Interfaces");
 	auto *mContextMenu = new QMenu(this);
 	mBackupStatisticsMenu = mContextMenu->addMenu(tr("Statistics"));
+	addInterfaceHistoryMenu(mContextMenu);
 	mContextMenu->addAction("Configure Interfaces", this, &QNetStats::showConfigure);
 	mContextMenu->addAction("Quit QNetStats", this, []() { QApplication::quit(); });
 	mBackupTrayIcon->setContextMenu(mContextMenu);

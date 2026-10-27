@@ -21,6 +21,7 @@ public:
 	static void readInterfaceConfig(const QString &ifName, ViewOptions *opts);
 
 	void checkTrayIconsAvailable();
+	void addInterfaceHistoryMenu(QMenu *menu);
 	void showInterfaceNotification(const QString &message,
 		QSystemTrayIcon::MessageIcon icon, int milliseconds);
 

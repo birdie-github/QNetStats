@@ -35,6 +35,8 @@ set(CMAKE_AUTOUIC on)
 set(CMAKE_AUTORCC on)
 
 add_executable(qnetstats
+        src/interfacehistory.cpp
+        src/interfacehistory.h
         src/textstatistics.cpp
         src/chart.cpp
         src/colorbutton.cpp

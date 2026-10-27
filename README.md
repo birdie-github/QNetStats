@@ -54,12 +54,30 @@ icon if only text is enabled; with both disabled, a temporary warning icon appea
 
 Click the icon (or choose **Review disconnect warning** from its menu, including
 on macOS) to see the detection time and current interface status. Choose
-**Acknowledge** to clear it; closing the dialog keeps it pending. Reconnecting
-does not clear an unacknowledged warning. Once acknowledged, an interface that
-remains down will not alarm again until it reconnects and disconnects again.
-Disabling the option or monitoring clears the warning; warnings are not saved
-across application restarts. Starting with an interface already down does not
-trigger one.
+**Acknowledge** to clear it; closing the dialog keeps it pending while down.
+Reconnection clears the warning immediately when detected and restores the normal
+icon. Once acknowledged, an interface that remains down will not alarm again
+until it reconnects and disconnects again. Disabling the option or monitoring
+clears the warning; warnings are not saved across application restarts. Starting
+with an interface already down does not trigger one.
+
+### Interface history
+
+Every tray menu offers **Interface History**, with a submenu for the interfaces
+currently monitored. Each interface has a scrollable history window with a Close
+button. It records Up/Down transitions independently of flashing and notification
+settings, using local ISO timestamps. Down entries include the preceding uptime
+as `Xd HH:MM:SS`, measured with a monotonic clock. Initial state is marked
+**first observed**; the initial connected period reports **observed up for**
+because the actual connection time is unknown. Disappearance counts as Down;
+repeated samples of the same state do not add entries.
+
+History retains up to 65,535 events per interface, discarding the oldest with a
+notice when the limit is reached. New entries scroll into view only when already
+at the bottom; reopening the window shows the latest entries. History is stored
+only in memory for the duration of monitoring that interface: closing the window
+retains it, while disabling monitoring or exiting discards it. No history files
+are written.
 
 Detection follows the configured sampling interval and interface state. It
 cannot detect a VPN that stops passing traffic while its interface stays up,

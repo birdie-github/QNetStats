@@ -39,6 +39,7 @@
 #include "qnetstatsview.h"
 #include "qnetstats.h"
 #include "statistics.h"
+#include "interfacehistory.h"
 #include "textstatistics.h"
 #include <QLocale>
 
@@ -147,6 +148,7 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 	mCarrier = false;
 
 	QNetStats::readInterfaceConfig(interface, &mOptions);
+	mHistory = new InterfaceHistory(this);
 	mTimer = new QTimer(this);
 	mTrayIcon = new QSystemTrayIcon(this);
 	mTextTrayIcon = new QSystemTrayIcon(this);
@@ -166,6 +168,7 @@ QNetStatsView::QNetStatsView(QNetStats *parent, const QString &interface)
 #ifdef Q_OS_MACOS
 	mContextMenu->addAction(tr("Statistics"), this, &QNetStatsView::showStatistics);
 #endif
+	parent->addInterfaceHistoryMenu(mContextMenu);
 	mContextMenu->addAction("Configure Interfaces", parent, &QNetStats::showConfigure);
 	mContextMenu->addAction("Quit QNetStats", parent, []() { QApplication::quit(); });
 
@@ -182,6 +185,8 @@ void QNetStatsView::setupView() {
 	const InterfaceSample sample = readInterfaceSample();
 	mInterfaceExists = sample.exists;
 	mCarrier = sample.identity != 0 && sample.carrier;
+	if (!sample.exists || sample.identity != 0)
+		mHistory->observe(mCarrier);
 	if (!sample.exists) {
 		connect(mTimer, &QTimer::timeout, this, &QNetStatsView::checkMissingInterface);
 		return;
@@ -215,7 +220,7 @@ bool QNetStatsView::warningUsesTextIcon() const {
 
 void QNetStatsView::recordDisconnect() {
 	// Only a transition from an observed connected state arms the warning.
-	// Keep the first detection time until acknowledged, even across reconnects.
+	// Keep the first detection time until acknowledgement or reconnection.
 	if (!mOptions.mFlashOnDisconnect || !mCarrier || !mDisconnectedAt.isNull())
 		return;
 	if (mWarningIcon.isNull()) {
@@ -300,6 +305,11 @@ void QNetStatsView::checkMissingInterface() {
 	mInterfaceExists = sample.exists;
 	if (sample.exists) {
 		mCarrier = sample.identity != 0 && sample.carrier;
+		if (sample.identity != 0) {
+			mHistory->observe(mCarrier);
+			if (mCarrier)
+				clearDisconnectWarning();
+		}
 		if (mDisconnectedAt.isNull() || warningUsesTextIcon())
 			mTrayIcon->setVisible(mCarrier && mOptions.mDisplayTrayIcon);
 		updateWarningPresentation();
@@ -314,6 +324,7 @@ void QNetStatsView::checkMissingInterface() {
 }
 
 void QNetStatsView::interfaceMissing() {
+	mHistory->observe(false);
 	recordDisconnect();
 	mInterfaceExists = false;
 	mCarrier = false;
@@ -353,6 +364,7 @@ void QNetStatsView::updateStats() {
 		return;
 	}
 
+	mHistory->observe(sample.carrier);
 	if (!sample.carrier) { // carrier down
 		resetSampling();
 		if (mCarrier) {
@@ -372,6 +384,7 @@ void QNetStatsView::updateStats() {
 	}
 	const bool carrierWasDown = !mCarrier;
 	mCarrier = true;
+	clearDisconnectWarning();
 	if (mOptions.mDisplayTrayIcon && !mTrayIcon->isVisible()) {
 		mTrayIcon->show();
 		mParent->checkTrayIconsAvailable();
@@ -562,6 +575,10 @@ void QNetStatsView::resetSampling() {
 	calcMaxSpeed();
 	updateTextTrayIcon();
 	emit chartHistoryChanged(true);
+}
+
+void QNetStatsView::showInterfaceHistory() {
+	mHistory->showWindow(displayName());
 }
 
 void QNetStatsView::showStatistics() {

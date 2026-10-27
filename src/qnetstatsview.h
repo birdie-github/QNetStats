@@ -11,6 +11,7 @@
 
 class QNetStats;
 class Statistics;
+class InterfaceHistory;
 class QMenu;
 class QTimer;
 class QAction;
@@ -46,6 +47,7 @@ public:
 
 	void updateViewOptions();
 	void showStatistics();
+	void showInterfaceHistory();
 
 	QString displayName() const;
 
@@ -64,6 +66,7 @@ signals:
 
 private:
 	QNetStats *mParent;
+	InterfaceHistory *mHistory;
 #ifdef Q_OS_LINUX
 	QString mSysDevPath;            // Path to the Linux device.
 #endif

@@ -84,7 +84,7 @@
       <item row="3" column="0">
        <widget class="QCheckBox" name="mFlashOnDisconnect">
         <property name="text"><string>Flash icon on disconnect</string></property>
-        <property name="toolTip"><string>Flash a warning until acknowledged, even if the interface reconnects.</string></property>
+        <property name="toolTip"><string>Flash a warning until acknowledged or the interface reconnects.</string></property>
        </widget>
       </item>
       <item row="4" column="0">
